@@ -71,6 +71,11 @@ if __name__ == "__main__":
     test_df = pd.read_csv("test.csv")
     test_df = test_df.rename({"date":"ds"}, axis=1)
 
+    # subset train data for computational reasons
+    # we will optimize hyperparams over smaller subsets of the data
+    # there are 54 stores, we will do 10 at a time
+    # train_df = train_df[(train_df["store_nbr"] >= 41)]
+
     ## interpolate missing oil values
     blank_oil_df = pd.DataFrame({"ds":pd.date_range(train_df["ds"].min(), test_df["ds"].max()).astype("str")})
     oil_df = blank_oil_df.merge(oil_df, how="left", on="ds")
@@ -93,7 +98,15 @@ if __name__ == "__main__":
     test_df = test_df.merge(stores_df[["store_nbr", "cluster"]], how="left", on="store_nbr")
 
     # set variables
-    key_cols = ["store_nbr", "family"]
+    # key_cols = ["store_nbr", "family"]
+    # hparam_grid = {
+    #     "changepoint_prior_scale":[0.001, 0.01, 0.1, 0.5],
+    #     "seasonality_prior_scale":[0.01, 0.5, 10],
+    #     "holidays_prior_scale":[0.01, 0.5, 10],
+    #     "changepoint_range":[0.8, 0.9, 0.95]
+    # }
+
+    key_cols = ["cluster", "family"]
     hparam_grid = {
         "changepoint_prior_scale":[0.001, 0.01, 0.1, 0.5],
         "seasonality_prior_scale":[0.01, 0.5, 10],
@@ -103,4 +116,4 @@ if __name__ == "__main__":
 
     # run hyperparameter optimization
     hparams_df = cv_optimize(key_cols, train_df, stores_dict, all_holidays_df, hparam_grid)
-    hparams_df.to_csv("./store_nbr_family_hyperparams.csv")
+    hparams_df.to_csv("./cluster_family_hyperparams.csv")
