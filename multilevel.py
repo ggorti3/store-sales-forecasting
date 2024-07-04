@@ -103,7 +103,6 @@ def cross_validation(train_df, key_cols_list, hp_df_list, stores_dict, all_holid
         d2 = (d + timedelta(days=train_days)).strftime("%Y-%m-%d")
         d3 = (d + timedelta(days=train_days + val_days)).strftime("%Y-%m-%d")
 
-        # get train and test sets
         # iterate over key_cols, hp_df pairs
         fits_dfs = []
         yhat_names = []
