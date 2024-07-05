@@ -132,7 +132,7 @@ def add_external_covars(train_df):
     oil_df = pd.read_csv("oil.csv")
     oil_df = oil_df.rename({"date":"ds"}, axis=1)
     # interpolate missing oil prices
-    blank_oil_df = pd.DataFrame({"ds":pd.date_range(train_df["ds"].min(), test_df["ds"].max()).astype("str")})
+    blank_oil_df = pd.DataFrame({"ds":pd.date_range(train_df["ds"].min(), train_df["ds"].max()).astype("str")})
     oil_df = blank_oil_df.merge(oil_df, how="left", on="ds")
     oil_df["dcoilwtico"] = oil_df["dcoilwtico"].interpolate("nearest")
     oil_df.iloc[0, 1] = 93.14
