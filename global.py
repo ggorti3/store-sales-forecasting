@@ -10,7 +10,75 @@
 # - store_nbr indicators
 # - family indicators
 
+import numpy as np
 import pandas as pd
+import lightgbm as lgb
+import re
+from datetime import date, timedelta
+from dataset_h5py import save2hdf
+import h5py
+import os
+
+FAMILY_CODES = {
+    'AUTOMOTIVE': 0,
+    'BABY CARE': 1,
+    'BEAUTY': 2,
+    'BEVERAGES': 3,
+    'BOOKS': 4,
+    'BREAD/BAKERY': 5,
+    'CELEBRATION': 6,
+    'CLEANING': 7,
+    'DAIRY': 8,
+    'DELI': 9,
+    'EGGS': 10,
+    'FROZEN FOODS': 11,
+    'GROCERY I': 12,
+    'GROCERY II': 13,
+    'HARDWARE': 14,
+    'HOME AND KITCHEN I': 15,
+    'HOME AND KITCHEN II': 16,
+    'HOME APPLIANCES': 17,
+    'HOME CARE': 18,
+    'LADIESWEAR': 19,
+    'LAWN AND GARDEN': 20,
+    'LINGERIE': 21,
+    'LIQUOR,WINE,BEER': 22,
+    'MAGAZINES': 23,
+    'MEATS': 24,
+    'PERSONAL CARE': 25,
+    'PET SUPPLIES': 26,
+    'PLAYERS AND ELECTRONICS': 27,
+    'POULTRY': 28,
+    'PREPARED FOODS': 29,
+    'PRODUCE': 30,
+    'SCHOOL AND OFFICE SUPPLIES': 31,
+    'SEAFOOD': 32
+}
+
+MONTH_CODES = {
+    "January":0,
+    "February":1,
+    "March":2,
+    "April":3,
+    "May":4,
+    "June":5,
+    "July":6,
+    "August":7,
+    "September":8,
+    "October":9,
+    "November":10,
+    "December":11
+}
+
+DAY_CODES = {
+    "Sunday":0,
+    "Monday":1,
+    "Tuesday":2,
+    "Wednesday":3,
+    "Thursday":4,
+    "Friday":5,
+    "Saturday":6
+}
 
 def get_recent_sales_covars(covar_days, val_days):
     # group by store_nbr and family then apply custom function?
@@ -20,7 +88,7 @@ def get_recent_sales_covars(covar_days, val_days):
     train_df = train_df.rename({"date":"ds", "sales":"y"}, axis=1)
 
     # subset for reasonable sized calculations
-    train_df = train_df[(train_df["store_nbr"] < 11)]
+    train_df = train_df[(train_df["store_nbr"] >= 21) & (train_df["store_nbr"] < 31)]
 
     def expand_days(x_df):
         n = x_df.shape[0]
@@ -150,10 +218,130 @@ def add_external_covars(train_df):
 
     return train_df
 
+class HDFSequence(lgb.Sequence):
+
+    def __init__(self, hdf_fname, batch_size):
+        self.data = h5py.File(hdf_fname, "r")["train_X"]
+        self.batch_size = batch_size
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def __len__(self):
+        return len(self.data)
+
+def rmsle_eval(preds, eval_data):
+    labels = eval_data.get_label()
+    return "rmsle", np.sqrt(np.mean((np.log(1 + preds) - np.log(1 + labels))**2)), False
+
+
+def theplan(file_list, d_split, batch_size):
+    # take in list of all csv files
+    # for each file
+
+    # list of train labels and list of val labels
+    train_y_list = []
+    val_y_list = []
+    # list of hdf file
+    hdf_file_list = []
+    # list of val_X
+    val_X_list = []
+    for i, file in enumerate(file_list):
+        # load df from csv
+        df = pd.read_csv(file)
+
+        # convert string columns to int for lbgm
+        df["family"] = df["family"].apply(lambda x: FAMILY_CODES[x])
+        df["month"] = df["month"].apply(lambda x: MONTH_CODES[x])
+        df["day"] = df["day"].apply(lambda x: DAY_CODES[x])
+        # drop non variable columns
+        stupid_cols = []
+        for c in df.columns:
+            if c.startswith("Unnamed"):
+                stupid_cols.append(c)
+        df = df.drop(stupid_cols, axis=1)
+
+        # split into train_X, train_y and val_X, val_y using d_split
+        train = df[df["ds"] < d_split]
+        train_X = train.drop(["ds", "y"], axis=1)
+        train_y_list.append(train["y"].values)
+
+        if i == 0:
+            # rename cols to lgb friendly names
+            train_X = train_X.rename(columns = lambda x:re.sub('[+]+', 'plus', x))
+            train_X = train_X.rename(columns = lambda x:re.sub('[-]+', 'minus', x))
+            train_X = train_X.rename(columns = lambda x:re.sub('[^A-Za-z0-9_]+', '', x))
+            names = train_X.columns
+            names = [n for n in train_X.columns]
+
+        val_filter = (pd.to_datetime(df["ds"]) - pd.to_timedelta(df["days_out"] - 1, "d")).dt.strftime("%Y-%m-%d") == d_split
+        val = df[val_filter]
+        val_X = val.drop(["ds", "y"], axis=1)
+        val_X_list.append(val_X.values)
+        val_y_list.append(val["y"].values)
+
+        # save large train data into hdf file
+        fname = file.split(".")[0] + ".hdf"
+        save2hdf({"train_X":train_X.values}, fname=fname, batch_size=batch_size)
+        hdf_file_list.append(fname)
+
+    train_y = np.concatenate(train_y_list)
+    val_X = np.concatenate(val_X_list)
+    val_y = np.concatenate(val_y_list)
+
+    # create lgb train dataset using sequences
+    train_seq_list = [HDFSequence(hdf_fname, batch_size) for hdf_fname in hdf_file_list]
+    train_dataset = lgb.Dataset(
+        train_seq_list,
+        feature_name=names,
+        categorical_feature=["store_nbr", "family", "cluster", "month", "day"],
+        label=train_y
+    )
+
+    # create validation set
+    # val_dataset = train_dataset.create_valid(val_X, label=val_y)
+    val_dataset = lgb.Dataset(
+        val_X,
+        feature_name=names,
+        categorical_feature=["store_nbr", "family", "cluster", "month", "day"],
+        label=val_y,
+        reference=train_dataset
+    )
+
+    # save datasets
+    train_dataset.save_binary("./train.bin")
+    val_dataset.save_binary("./val.bin")
+
+    # param = {'num_leaves': 31, 'objective':'regression'}#, "metric":"None"}
+    # num_round = 10
+    # bst = lgb.train(param, train_dataset, num_round, valid_sets=[val_dataset])#, feval=rmsle_eval)
+    # bst.add_valid(val_dataset, "myvalset")
+    # val_result = bst.eval_valid()#feval=rmsle_eval)
+    # bst.save_model('model.txt')
+    # print(val_result)
+
+    # delete h5py files
+    for f in hdf_file_list:
+        os.remove(f)
+    
+    # return train_dataset, val_dataset
+
 
 if __name__ == "__main__":
-    train_df = get_recent_sales_covars(covar_days=21, val_days=16)
-    train_df = add_external_covars(train_df)
-    train_df = add_holidays_covars(train_df)
-    train_df.to_csv("./global_train_1.csv")
+    # # converting raw data to global model data
+    # train_df = get_recent_sales_covars(covar_days=21, val_days=16)
+    # train_df = add_external_covars(train_df)
+    # train_df = add_holidays_covars(train_df)
+    # train_df.to_csv("./global_train_3.csv")
+
+    # # sort data by ds
+    # train_df = pd.read_csv("global_train_3.csv")
+    # train_df = train_df.sort_values("ds")
+    # train_df.to_csv("./global_train_3.csv", mode="w")
+
+    theplan(
+        ["global_train_1.csv", "global_train_2.csv"],
+        d_split="2016-08-01",
+        batch_size=33*16
+    )
 
