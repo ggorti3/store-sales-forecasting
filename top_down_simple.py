@@ -277,7 +277,7 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
     pred_df = prop_preds_df.merge(key_level_pred_df, on=key_cols + ["ds"])
     pred_df["yhat"] = (pred_df["yhat"] * pred_df["prop_hat"])
     pred_df["yhat"] = pred_df["yhat"].clip(lower=0)
-    pred_df = pred_df.reset_index()[key_cols + ["ds", "yhat"]]
+    pred_df = pred_df.reset_index()[key_cols + support_cols + ["ds", "yhat"]]
     return pred_df
 
 if __name__ == "__main__":
