@@ -337,4 +337,5 @@ if __name__ == "__main__":
     support_cols = ["store_nbr"]
     hp_df = pd.read_csv("./hyperparams/family_hyperparams2.csv")
     pred_df = fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df, max_window_size=14)
+    pred_df.to_csv("./family_down_predictions.csv")
     print(pred_df.head())
