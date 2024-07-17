@@ -263,6 +263,72 @@ def cross_validation(key_cols, train_df, stores_dict, all_holidays_df, hp_df, tr
     msles_df = msles_df.pivot(columns="cutoff", index=key_cols, values="msle")
     return msles_df
 
+def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df):
+    # merge train_df with hp_df
+    train_df = train_df.merge(hp_df, on=key_cols)
+
+    # group by key col and apply custom function
+    def fp(x_df):
+        # get key_col values for display purposes
+        # create filter for test data
+        tup = tuple()
+        filter = pd.Series(test_df.shape[0] * [True])
+        for c in key_cols:
+            tup += (x_df[c].iloc[0], )
+            filter = filter & (test_df[c] == x_df[c].iloc[0])
+        
+        # get test_data (dates and external regressors)
+        x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
+
+        # get h_df
+        store_nbrs = x_df["store_nbr"].drop_duplicates()
+        states = [stores_dict[snbr]["state"] for snbr in store_nbrs]
+        cities = [stores_dict[snbr]["city"] for snbr in store_nbrs]
+        filter = (all_holidays_df["locale_name"] == "Ecuador")
+        for s in states:
+            filter = filter | (all_holidays_df["locale_name"] == s)
+        for c in cities:
+            filter = filter | (all_holidays_df["locale_name"] == c)
+        h_df = all_holidays_df[filter]
+        h_df = h_df[["ds", "holiday", "lower_window", "upper_window"]]
+
+        # get hyperparams
+        cp_scale = x_df["changepoint_prior_scale"].iloc[0]
+        sp_scale = x_df["seasonality_prior_scale"].iloc[0]
+        hp_scale = x_df["holidays_prior_scale"].iloc[0]
+        cr = x_df["changepoint_range"].iloc[0]
+
+        # aggregate x_df
+        x_df = x_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+
+        # remove up to first nonzero entry of x_df
+        first_date = x_df["ds"][x_df["y"] > 0].min()
+        x_df = x_df[x_df["ds"] >= first_date]
+
+        if x_df.shape[0] == 0:
+            # when there is no data, return all zero predictions
+            preds = x_test_df[["ds"]]
+            preds["yhat"] = 0
+        else:
+            # instantiate model
+            model = Prophet(
+                uncertainty_samples=0,
+                holidays=h_df,
+                changepoint_prior_scale=cp_scale,
+                seasonality_prior_scale=sp_scale,
+                holidays_prior_scale=hp_scale,
+                changepoint_range=cr
+            )
+            model.add_regressor("onpromotion")
+            model.add_regressor("dcoilwtico")
+            # fit model
+            model.fit(x_df)
+            preds = model.predict(x_test_df)[["ds", "yhat"]]
+        
+        return preds
+
+    return train_df.groupby(key_cols)[train_df.columns].apply(fp).reset_index()
+
 if __name__ == "__main__":
     # data loading and processing
     train_df = pd.read_csv("./train.csv")
