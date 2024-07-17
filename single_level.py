@@ -279,6 +279,8 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
         
         # get test_data (dates and external regressors)
         x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
+        # agg x_test_df
+        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
 
         # get h_df
         store_nbrs = x_df["store_nbr"].drop_duplicates()
@@ -329,7 +331,7 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
         print(display_str)
         return preds
 
-    return train_df.groupby(key_cols)[train_df.columns].apply(fp).reset_index()
+    return train_df.groupby(key_cols)[train_df.columns].apply(fp).reset_index()[key_cols + ["ds", "yhat"]]
 
 if __name__ == "__main__":
     # data loading and processing

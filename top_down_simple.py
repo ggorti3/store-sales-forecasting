@@ -160,6 +160,126 @@ def cross_validation(key_cols, support_cols, hp_df, train_df, stores_dict, all_h
     msles_df = msles_df.pivot(index=key_cols + support_cols, columns="cutoff", values="msle")
     return msles_df
 
+def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df, max_window_size=14):
+
+    # generate prop_df
+    train_prop_df = get_proportions(key_cols, support_cols, train_df)
+
+    # merge train_df with hp_df
+    train_df = train_df.merge(hp_df, on=key_cols)
+
+    # group by key col and apply custom function
+    def fp_prophet(x_df):
+        # get key_col values for display purposes
+        # create filter for test data
+        tup = tuple()
+        filter = pd.Series(test_df.shape[0] * [True])
+        for c in key_cols:
+            tup += (x_df[c].iloc[0], )
+            filter = filter & (test_df[c] == x_df[c].iloc[0])
+        
+        # get test_data (dates and external regressors)
+        x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
+        # agg x_test_df
+        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+
+        # get h_df
+        store_nbrs = x_df["store_nbr"].drop_duplicates()
+        states = [stores_dict[snbr]["state"] for snbr in store_nbrs]
+        cities = [stores_dict[snbr]["city"] for snbr in store_nbrs]
+        filter = (all_holidays_df["locale_name"] == "Ecuador")
+        for s in states:
+            filter = filter | (all_holidays_df["locale_name"] == s)
+        for c in cities:
+            filter = filter | (all_holidays_df["locale_name"] == c)
+        h_df = all_holidays_df[filter]
+        h_df = h_df[["ds", "holiday", "lower_window", "upper_window"]]
+
+        # get hyperparams
+        cp_scale = x_df["changepoint_prior_scale"].iloc[0]
+        sp_scale = x_df["seasonality_prior_scale"].iloc[0]
+        hp_scale = x_df["holidays_prior_scale"].iloc[0]
+        cr = x_df["changepoint_range"].iloc[0]
+
+        # aggregate x_df
+        x_df = x_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+
+        # remove up to first nonzero entry of x_df
+        first_date = x_df["ds"][x_df["y"] > 0].min()
+        x_df = x_df[x_df["ds"] >= first_date]
+
+        if x_df.shape[0] == 0:
+            # when there is no data, return all zero predictions
+            preds = x_test_df[["ds"]]
+            preds["yhat"] = 0
+        else:
+            # instantiate model
+            model = Prophet(
+                uncertainty_samples=0,
+                holidays=h_df,
+                changepoint_prior_scale=cp_scale,
+                seasonality_prior_scale=sp_scale,
+                holidays_prior_scale=hp_scale,
+                changepoint_range=cr
+            )
+            model.add_regressor("onpromotion")
+            model.add_regressor("dcoilwtico")
+            # fit model
+            model.fit(x_df)
+            preds = model.predict(x_test_df)[["ds", "yhat"]]
+        # display string
+        display_str = "{} predictions complete".format(tup)
+        print(display_str)
+        return preds
+    
+    def roll_forward(x_df):
+        # x_df is prop_df grouped at lowest level
+
+        # test df filter
+        filter = pd.Series(test_df.shape[0] * [True])
+        for c in key_cols + support_cols:
+            filter = filter & (test_df[c] == x_df[c].iloc[0])
+
+        # get test_data (dates and external regressors)
+        x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
+        # agg x_test_df
+        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+
+        latest_train_date = datetime.strptime(x_df["ds"].sort_values().iloc[-1], "%Y-%m-%d").date()
+        latest_test_date = datetime.strptime(x_test_df["ds"].sort_values().iloc[-1], "%Y-%m-%d").date()
+        roll_days = (latest_test_date - latest_train_date).days
+
+        window_start_date = latest_train_date - timedelta(days=max_window_size).strftime("%Y-%m-%d")
+
+        # get max_window_size most recent train data points
+        window = x_df[x_df["ds"] >= window_start_date]
+        window_length = window.shape[0]
+        pred_df = pd.DataFrame({
+            "ds":pd.date_range(start=window_start_date, periods=roll_days + window_length, freq="D", inclusive="left").strftime("%Y-%m-%d"),
+            "prop_hat":np.concatenate([window["prop"].to_numpy(), np.zeros((roll_days, ))])
+        })
+        if window_length > 0:
+            window_sum = window["prop"].sum()
+            for i in range(roll_days):
+                pred_df.iloc[i + window_length, 1] = window_sum / window_length
+                window_sum -= pred_df.iloc[i, 1]
+                window_sum += pred_df.iloc[i + window_length, 1]
+        pred_df = pred_df.iloc[window_length:, :]
+        return pred_df
+    
+    # fit predict prophet at key_col level
+    key_level_pred_df = train_df.groupby(key_cols)[train_df.columns].apply(fp_prophet).reset_index()
+
+    # roll props forward
+    prop_preds_df = train_prop_df.groupby(key_cols + support_cols)[train_prop_df.columns].apply(roll_forward).reset_index()
+
+    # merge prophet and var predictions at key_col level and multiply to calculate lowest level predictions
+    pred_df = prop_preds_df.merge(key_level_pred_df, on=key_cols + ["ds"])
+    pred_df["yhat"] = (pred_df["yhat"] * pred_df["prop_hat"])
+    pred_df["yhat"] = pred_df["yhat"].clip(lower=0)
+    pred_df = pred_df.reset_index()[key_cols + ["ds", "yhat"]]
+    return pred_df
+
 if __name__ == "__main__":
     # data loading and processing
     train_df = pd.read_csv("./train.csv")
