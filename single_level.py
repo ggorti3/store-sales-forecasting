@@ -324,7 +324,9 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
             # fit model
             model.fit(x_df)
             preds = model.predict(x_test_df)[["ds", "yhat"]]
-        
+        # display string
+        display_str = "{} predictions complete".format(tup)
+        print(display_str)
         return preds
 
     return train_df.groupby(key_cols)[train_df.columns].apply(fp).reset_index()
@@ -384,12 +386,12 @@ if __name__ == "__main__":
     # hparams_df = cv_optimize(key_cols, train_df, stores_dict, all_holidays_df, hparam_grid, train_days=365*4 + 128, val_days=16, interval=28)
     # hparams_df.to_csv("./family_hyperparams2.csv")
 
-    # cross validation using found hyperparameters
-    key_cols = ["store_nbr", "family"]
-    hp_df = pd.read_csv("./store_nbr_family_hyperparams2.csv")
-    msles_df = cross_validation(key_cols, train_df, stores_dict, all_holidays_df, hp_df, train_days=365*4 + 128, val_days=16, interval=28)
-    msles_df.to_csv("./store_nbr_family_best_msles2.csv")
-    print(msles_df.mean(axis=0)**0.5)
+    # # cross validation using found hyperparameters
+    # key_cols = ["store_nbr", "family"]
+    # hp_df = pd.read_csv("./store_nbr_family_hyperparams2.csv")
+    # msles_df = cross_validation(key_cols, train_df, stores_dict, all_holidays_df, hp_df, train_days=365*4 + 128, val_days=16, interval=28)
+    # msles_df.to_csv("./store_nbr_family_best_msles2.csv")
+    # print(msles_df.mean(axis=0)**0.5)
 
     # rand_store_nbr = 24
     # rand_family = ""
@@ -400,3 +402,10 @@ if __name__ == "__main__":
     # hp_df = pd.read_csv("./hyperparams/store_nbr_family_hyperparams.csv")
     # cutoffs = ["2017-02-12", "2017-04-09", "2017-06-04", "2017-07-30"]
     # visualize(key_col_values, train_df, hp_df, cutoffs)
+
+    # fit predict
+    key_cols = ["store_nbr", "family"]
+    hp_df = pd.read_csv("./hyperparams/store_nbr_family_hyperparams2.csv")
+    pred_df = fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df)
+    pred_df.to_csv("./single_level_predictions.csv")
+    print(pred_df.head())

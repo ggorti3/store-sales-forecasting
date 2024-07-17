@@ -203,9 +203,9 @@ if __name__ == "__main__":
     test_df = test_df.merge(stores_df[["store_nbr", "cluster"]], how="left", on="store_nbr")
 
     # cross validation using found hyperparameters
-    key_cols = ["family"]
+    key_cols = ["cluster", "family"]
     support_cols = ["store_nbr"]
-    hp_df = pd.read_csv("./hyperparams/family_hyperparams.csv")
+    hp_df = pd.read_csv("./hyperparams/cluster_family_hyperparams2.csv")
     msles_df = cross_validation(key_cols, support_cols, hp_df, train_df, stores_dict, all_holidays_df, max_window_size=14, train_days=365*4 + 128, val_days=16, interval=28)
-    msles_df.to_csv("./top_down_family_then_store_nbr_best_msles.csv")
+    msles_df.to_csv("./top_down_store_nbr_family_best_msles2.csv")
     print(msles_df.mean(axis=0)**0.5)
