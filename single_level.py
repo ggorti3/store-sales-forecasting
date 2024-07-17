@@ -280,7 +280,7 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
         # get test_data (dates and external regressors)
         x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
         # agg x_test_df
-        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+        x_test_df = x_test_df.groupby("ds").agg({"onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
 
         # get h_df
         store_nbrs = x_df["store_nbr"].drop_duplicates()
@@ -326,6 +326,8 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
             # fit model
             model.fit(x_df)
             preds = model.predict(x_test_df)[["ds", "yhat"]]
+            preds["yhat"] = preds["yhat"].clip(0)
+            preds["ds"] = np.datetime_as_string(preds["ds"].to_numpy(), unit='D')
         # display string
         display_str = "{} predictions complete".format(tup)
         print(display_str)

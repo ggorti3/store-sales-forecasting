@@ -181,7 +181,7 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
         # get test_data (dates and external regressors)
         x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
         # agg x_test_df
-        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+        x_test_df = x_test_df.groupby("ds").agg({"onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
 
         # get h_df
         store_nbrs = x_df["store_nbr"].drop_duplicates()
@@ -227,6 +227,8 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
             # fit model
             model.fit(x_df)
             preds = model.predict(x_test_df)[["ds", "yhat"]]
+            preds["yhat"] = preds["yhat"].clip(0)
+            preds["ds"] = np.datetime_as_string(preds["ds"].to_numpy(), unit='D')
         # display string
         display_str = "{} predictions complete".format(tup)
         print(display_str)
@@ -243,13 +245,13 @@ def fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df
         # get test_data (dates and external regressors)
         x_test_df = test_df[filter][["ds", "onpromotion", "dcoilwtico"]].reset_index(drop=True)
         # agg x_test_df
-        x_test_df = x_test_df.groupby("ds").agg({"y":"sum", "onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
+        x_test_df = x_test_df.groupby("ds").agg({"onpromotion":"sum", "dcoilwtico":"first"}).reset_index()
 
         latest_train_date = datetime.strptime(x_df["ds"].sort_values().iloc[-1], "%Y-%m-%d").date()
         latest_test_date = datetime.strptime(x_test_df["ds"].sort_values().iloc[-1], "%Y-%m-%d").date()
         roll_days = (latest_test_date - latest_train_date).days
 
-        window_start_date = latest_train_date - timedelta(days=max_window_size).strftime("%Y-%m-%d")
+        window_start_date = (latest_train_date - timedelta(days=max_window_size)).strftime("%Y-%m-%d")
 
         # get max_window_size most recent train data points
         window = x_df[x_df["ds"] >= window_start_date]
@@ -322,10 +324,17 @@ if __name__ == "__main__":
     train_df = train_df.merge(stores_df[["store_nbr", "cluster"]], how="left", on="store_nbr")
     test_df = test_df.merge(stores_df[["store_nbr", "cluster"]], how="left", on="store_nbr")
 
+    # # cross validation using found hyperparameters
+    # key_cols = ["cluster", "family"]
+    # support_cols = ["store_nbr"]
+    # hp_df = pd.read_csv("./hyperparams/cluster_family_hyperparams2.csv")
+    # msles_df = cross_validation(key_cols, support_cols, hp_df, train_df, stores_dict, all_holidays_df, max_window_size=14, train_days=365*4 + 128, val_days=16, interval=28)
+    # msles_df.to_csv("./top_down_store_nbr_family_best_msles2.csv")
+    # print(msles_df.mean(axis=0)**0.5)
+
     # cross validation using found hyperparameters
-    key_cols = ["cluster", "family"]
+    key_cols = ["family"]
     support_cols = ["store_nbr"]
-    hp_df = pd.read_csv("./hyperparams/cluster_family_hyperparams2.csv")
-    msles_df = cross_validation(key_cols, support_cols, hp_df, train_df, stores_dict, all_holidays_df, max_window_size=14, train_days=365*4 + 128, val_days=16, interval=28)
-    msles_df.to_csv("./top_down_store_nbr_family_best_msles2.csv")
-    print(msles_df.mean(axis=0)**0.5)
+    hp_df = pd.read_csv("./hyperparams/family_hyperparams2.csv")
+    pred_df = fit_predict(key_cols, train_df, test_df, stores_dict, all_holidays_df, hp_df, max_window_size=14)
+    print(pred_df.head())
